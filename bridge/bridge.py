@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-CMLS Project — Sensor → OSC bridge
+CMLS Project — Sensor → OSC bridge.
 
-读取 Arduino 串口输出的 "x,y,z\\n" (单位 g)，
-计算 tilt / shake，同时发送 OSC 给 SuperCollider 和 JUCE。
+Reads "x,y,z\\n" lines from the Arduino serial port (units of g),
+derives tilt and shake values, and forwards them as OSC to both
+SuperCollider and the JUCE plugin.
 
-OSC 地址（与 SC 端 cmls_proj.scd 对齐）：
-    /sensor/accel  x y z          float, 归一化到 -1..1
-    /sensor/tilt   roll pitch     float, 弧度
+OSC addresses (matching supercollider/cmls_proj.scd):
+    /sensor/accel  x y z          float, normalised to -1..1
+    /sensor/tilt   roll pitch     float, radians
     /sensor/shake  magnitude      float, 0..~
 
 Usage:
     python3 bridge.py --port /dev/tty.usbmodem1101
-    python3 bridge.py --mock              # 不接硬件，发送测试用的正弦波
-    python3 bridge.py --port ... --debug  # 打印每条 OSC
+    python3 bridge.py --mock              # no hardware, emits a slow sine
+    python3 bridge.py --port ... --debug  # print each OSC message
 """
 
 import argparse
@@ -29,8 +30,8 @@ from pythonosc.udp_client import SimpleUDPClient
 SC_HOST,   SC_PORT   = "127.0.0.1", 57120
 JUCE_HOST, JUCE_PORT = "127.0.0.1", 9001
 BAUD = 115200
-ACCEL_RANGE_G = 4.0   # 与 Arduino 端 setAccelerometerRange 一致
-SHAKE_SMOOTH  = 0.85  # IIR 系数；越大越平滑
+ACCEL_RANGE_G = 4.0   # must match the Arduino's setAccelerometerRange
+SHAKE_SMOOTH  = 0.85  # IIR coefficient; higher = smoother
 
 
 def parse_args():
@@ -51,7 +52,7 @@ def make_client(spec):
 
 
 class Sender:
-    """同时往 SC 和 JUCE 双发。"""
+    """Fan-out sender: every message goes to both SC and JUCE."""
     def __init__(self, sc, juce, debug=False):
         self.sc = sc
         self.juce = juce
@@ -65,13 +66,13 @@ class Sender:
 
 
 def normalize_axis(g_value, full_scale):
-    """g 值 → -1..1，超量程截断。"""
+    """Map a g-value into -1..1, clipped to range."""
     v = g_value / full_scale
     return max(-1.0, min(1.0, v))
 
 
 def tilt_from_accel(x, y, z):
-    """重力主导假设下的 roll/pitch（弧度）。"""
+    """Roll / pitch in radians, assuming gravity dominates the signal."""
     roll  = math.atan2(y, z)
     pitch = math.atan2(-x, math.sqrt(y * y + z * z) + 1e-9)
     return roll, pitch
@@ -98,7 +99,7 @@ def process_and_send(sender, x_g, y_g, z_g, state):
 def run_serial(args, sender):
     print(f"opening {args.port} @ {args.baud}", file=sys.stderr)
     ser = serial.Serial(args.port, args.baud, timeout=1)
-    time.sleep(2)  # Arduino 自动复位等一下
+    time.sleep(2)  # wait out the Arduino auto-reset
     ser.reset_input_buffer()
 
     state = {"prev": (0.0, 0.0, 0.0), "shake": 0.0}
@@ -116,8 +117,8 @@ def run_serial(args, sender):
 
 
 def run_mock(sender):
-    """没硬件时用：用慢正弦波驱动各轴，方便调 SC/JUCE。"""
-    print("mock mode — Ctrl+C to stop", file=sys.stderr)
+    """No-hardware mode: drive the axes with slow sines for SC/JUCE testing."""
+    print("mock mode -- Ctrl+C to stop", file=sys.stderr)
     state = {"prev": (0.0, 0.0, 0.0), "shake": 0.0}
     t0 = time.time()
     while True:
