@@ -23,7 +23,7 @@ plugin.
   - `\pluginSource`: SC ignores sensor motion and stays a stable source so a
     future JUCE plugin can take over the modulation.
 - A Python bridge (`bridge/bridge.py`) that emits the same OSC protocol from
-  either real Arduino/MPU6050 input or a `--mock` sine wave for testing
+  either real Arduino/MMA7361 input or a `--mock` sine wave for testing
   without hardware.
 
 ## Current Architecture
@@ -58,7 +58,7 @@ cmls/
 |-- supercollider/         Current focus: SC sound + sensor OSC control
 |   `-- cmls_proj.scd
 |-- bridge/                Optional draft bridge: Arduino serial -> OSC
-|   |-- arduino_accel/     Arduino sketch placeholder/draft for MPU6050
+|   |-- arduino_accel/     Arduino sketch for MMA7361 (3-axis analog accel)
 |   |-- bridge.py          Python serial/mock -> OSC sender
 |   `-- requirements.txt
 |-- juce/                  Placeholder for future JUCE plugin project
@@ -184,9 +184,19 @@ For real hardware later:
 python3 bridge.py --port /dev/tty.usbmodem1101 --debug
 ```
 
-The Arduino sketch currently assumes an MPU6050 and prints `x,y,z` acceleration
-values in g units. If the team uses another sensor, keep the same serial format
-so the Python bridge does not need to change.
+The Arduino sketch targets an **MMA7361** 3-axis analog accelerometer and
+prints `x,y,z` lines in g units at 50 Hz. Default wiring assumes:
+
+- VCC -> 3.3V, GND -> GND
+- X, Y, Z analog outputs -> A0, A1, A2
+- SL (sleep) -> digital pin 4 (held HIGH to wake the sensor)
+- GS (g-select) tied LOW for the +-1.5g range
+- ST (self-test) tied LOW
+
+If the team swaps to a different sensor, keep the same serial format
+(`x,y,z\n` in g units) so the Python bridge does not need to change.
+For wider headroom, tie GS HIGH (+-6g) and update `SENSITIVITY` in the
+sketch and `ACCEL_RANGE_G` in `bridge/bridge.py` to match.
 
 ## Future JUCE Work
 

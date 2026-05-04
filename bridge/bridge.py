@@ -30,7 +30,7 @@ from pythonosc.udp_client import SimpleUDPClient
 SC_HOST,   SC_PORT   = "127.0.0.1", 57120
 JUCE_HOST, JUCE_PORT = "127.0.0.1", 9001
 BAUD = 115200
-ACCEL_RANGE_G = 4.0   # must match the Arduino's setAccelerometerRange
+ACCEL_RANGE_G = 1.5   # must match the Arduino's g-range (MMA7361 +-1.5g default)
 SHAKE_SMOOTH  = 0.85  # IIR coefficient; higher = smoother
 
 
