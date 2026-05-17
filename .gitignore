@@ -1,39 +1,12 @@
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
+# --- Single hard exclusion: GitHub blocks files > 100MB ---
+juce/NoteDance/Builds/MacOSX/build/Debug/libNoteDance.a
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-env/
-.python-version
-
-# JUCE / Projucer
-juce/**/Builds/
-juce/**/JuceLibraryCode/
-juce/**/*.exe
-*.dmg
-*.app/
-
-# Arduino
-bridge/arduino_accel/build/
-*.hex
-*.elf
-
-# IDE / editors
+# IDE / editor scratch
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-
-# SuperCollider
-*.scsyndef
 
 # Logs / scratch
 *.log
