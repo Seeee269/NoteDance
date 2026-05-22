@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio Version 18
+
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NoteDance - Standalone Plugin", "NoteDance_StandalonePlugin.vcxproj", "{5A9E4460-228C-68D1-D275-F56D485EEA4A}"
+	ProjectSection(ProjectDependencies) = postProject
+		{788184BE-F2D9-70FB-82C3-9855F38040FD} = {788184BE-F2D9-70FB-82C3-9855F38040FD}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NoteDance - VST3", "NoteDance_VST3.vcxproj", "{3EF8A0E3-AFD6-AA7B-8A50-EABD4695A3B1}"
+	ProjectSection(ProjectDependencies) = postProject
+		{788184BE-F2D9-70FB-82C3-9855F38040FD} = {788184BE-F2D9-70FB-82C3-9855F38040FD}
+		{94124E10-4795-8707-59A9-541F25ED85E5} = {94124E10-4795-8707-59A9-541F25ED85E5}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NoteDance - Shared Code", "NoteDance_SharedCode.vcxproj", "{788184BE-F2D9-70FB-82C3-9855F38040FD}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NoteDance - VST3 Manifest Helper", "NoteDance_VST3ManifestHelper.vcxproj", "{94124E10-4795-8707-59A9-541F25ED85E5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3EF8A0E3-AFD6-AA7B-8A50-EABD4695A3B1}.Debug|x64.ActiveCfg = Debug|x64
+		{3EF8A0E3-AFD6-AA7B-8A50-EABD4695A3B1}.Debug|x64.Build.0 = Debug|x64
+		{3EF8A0E3-AFD6-AA7B-8A50-EABD4695A3B1}.Release|x64.ActiveCfg = Release|x64
+		{3EF8A0E3-AFD6-AA7B-8A50-EABD4695A3B1}.Release|x64.Build.0 = Release|x64
+		{5A9E4460-228C-68D1-D275-F56D485EEA4A}.Debug|x64.ActiveCfg = Debug|x64
+		{5A9E4460-228C-68D1-D275-F56D485EEA4A}.Debug|x64.Build.0 = Debug|x64
+		{5A9E4460-228C-68D1-D275-F56D485EEA4A}.Release|x64.ActiveCfg = Release|x64
+		{5A9E4460-228C-68D1-D275-F56D485EEA4A}.Release|x64.Build.0 = Release|x64
+		{788184BE-F2D9-70FB-82C3-9855F38040FD}.Debug|x64.ActiveCfg = Debug|x64
+		{788184BE-F2D9-70FB-82C3-9855F38040FD}.Debug|x64.Build.0 = Debug|x64
+		{788184BE-F2D9-70FB-82C3-9855F38040FD}.Release|x64.ActiveCfg = Release|x64
+		{788184BE-F2D9-70FB-82C3-9855F38040FD}.Release|x64.Build.0 = Release|x64
+		{94124E10-4795-8707-59A9-541F25ED85E5}.Debug|x64.ActiveCfg = Debug|x64
+		{94124E10-4795-8707-59A9-541F25ED85E5}.Debug|x64.Build.0 = Debug|x64
+		{94124E10-4795-8707-59A9-541F25ED85E5}.Release|x64.ActiveCfg = Release|x64
+		{94124E10-4795-8707-59A9-541F25ED85E5}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
