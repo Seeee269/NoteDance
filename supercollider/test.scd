@@ -55,15 +55,16 @@ if(here.isNil) {
             ~start.value;
             s.sync;
 
-            "[demo] idle  (engine LEFT, drift RIGHT)".postln;            3.wait;
-            "[demo] throttle up   -> engine revs higher".postln;
-            30.do { |i| ~updateFromShake.value(i / 29 * 0.18); 0.1.wait };
-            "[demo] high rpm".postln;                                    2.wait;
-            "[demo] throttle down -> revs fall back".postln;
-            30.do { |i| ~updateFromShake.value((1 - (i / 29)) * 0.18); 0.1.wait };
-            "[demo] RIGHT turn (higher blink)".postln;  ~setTurn.value(1);   3.wait;
-            "[demo] LEFT turn  (lower blink)".postln;   ~setTurn.value(-1);  3.wait;
-            "[demo] straight   (blink off)".postln;     ~setTurn.value(0);   2.wait;
+            "[demo] idle (engine only, LEFT)".postln;                    3.wait;
+            "[demo] throttle up/down -> engine revs".postln;
+            30.do { |i| ~updateFromShake.value(i / 29 * 0.18); 0.07.wait };
+            30.do { |i| ~updateFromShake.value((1 - (i / 29)) * 0.18); 0.07.wait };
+            "[demo] DRIFT on  (|pan|>0.7 -> tire skid, RIGHT)".postln; ~setDrift.value(0.9); 4.wait;
+            "[demo] DRIFT off (back inside)".postln;                   ~setDrift.value(0);   2.wait;
+            "[demo] RIGHT turn signal".postln;          ~setTurn.value(1);   3.wait;
+            "[demo] LEFT turn signal".postln;           ~setTurn.value(-1);  3.wait;
+            "[demo] hard corner: turn + drift".postln;  ~setTurn.value(1); ~setDrift.value(0.9); 4.wait;
+            "[demo] straight (all off)".postln;  ~setTurn.value(0); ~setDrift.value(0);  2.wait;
             "[demo] stop".postln;                       ~stop.value;         1.wait;
 
             "=== done ===".postln;

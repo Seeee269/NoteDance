@@ -1,10 +1,10 @@
 // =====================================================================
 // CMLS Project - SuperCollider car-sound source
 //
-// Always-on car soundscape, split hard across the stereo field:
-//   - engine sound       -> LEFT  output channel   (from engine.scd)
-//   - drifting drone      -> RIGHT output channel
-//   - turn-signal melody  -> RIGHT output channel   (triggered, not always-on)
+// Car soundscape, split hard across the stereo field:
+//   - engine sound       -> LEFT  output channel   (from engine.scd, always on)
+//   - tire/drift sound    -> RIGHT output channel   (triggered by |pan| > threshold)
+//   - turn-signal melody  -> RIGHT output channel   (triggered by turn state)
 //
 // The stereo split is the whole point: a downstream JUCE plugin pitch-shifts
 // the LEFT channel (engine only) and bypasses the RIGHT channel, so the turn
@@ -44,11 +44,17 @@ s.boot;
     shakeMax:         0.18,
     tiltPitchPolarity: 1,     // set to -1 if the board feels inverted
     rollPanPolarity:   1,     // set to -1 if left/right feels inverted
-    // --- turn signal ---
+    // --- turn signal --- (hysteresis: start above On, end below Off; deadband absorbs jitter)
     turnSpeed:        1.0,    // blink-clock tempo; 1.0 ~= one "people-people" per 0.9 s
-    turnThreshold:    0.35,   // |rollNorm| above this auto-triggers a turn
+    turnOnThreshold:  0.35,   // |rollNorm| above this starts a turn
+    turnOffThreshold: 0.25,   // |rollNorm| below this ends it
     turnFromRoll:     true,   // derive turn left/right from board roll
     turnAmp:          0.36,
+    // --- drift / tire-skid --- (same hysteresis idea)
+    driftOnThreshold:  0.7,   // |pan| above this starts the tire/drift sound
+    driftOffThreshold: 0.55,  // |pan| below this stops it
+    driftFromPan:      true,  // auto-trigger drift from |pan| (roll) magnitude
+    driftAmp:          0.32,  // base level of the drift sound
     // --- engine ---
     engineIdleSpeed:  0.34,   // engineSpeed at rest (0..1)
     engineMaxSpeed:   0.9     // engineSpeed under full activity
@@ -94,21 +100,27 @@ if(thisProcess.nowExecutingPath.notNil) {
     "[cmls] Could not locate engine.scd automatically - evaluate engine.scd by hand.".warn;
 };
 
-// 2.1 Drift voice: the old static drone, now slowly drifting in pitch/level/timbre.
-SynthDef(\driftVoice, { |out = 0, freq = 220, amp = 0.3, gate = 1, pan = 0, cutoff = 1600|
-    var sig, env, detune, freqDrift, ampDrift, cutoffDrift;
-    // very low-frequency modulators -> a subtle "floating" feel, never obvious
-    freqDrift   = SinOsc.kr(0.05, 0).range(-0.006, 0.006);      // +-0.6% pitch wander
-    ampDrift    = SinOsc.kr(0.07, 1.5 * pi).range(0.82, 1.0);   // gentle level swell
-    cutoffDrift = LFNoise1.kr(0.08).range(-250, 250);           // slow timbral float
-    detune      = LFNoise2.kr(0.15 ! 4).range(-0.4, 0.4);
-    sig = Mix.fill(4, { |i|
-        SinOsc.ar(freq.lag(0.2) * (1 + freqDrift) * (i + 1) + detune[i]) * (1 / (i + 1.7))
-    });
-    sig = sig + (Saw.ar(freq.lag(0.2) * [1.0, 1.005]).sum * 0.035);
-    sig = LPF.ar(sig, (cutoff.lag(0.25) + cutoffDrift).clip(120, 12000));
-    env = EnvGen.kr(Env.asr(1.5, 1, 1.2), gate, doneAction: 2);
-    Out.ar(out, Pan2.ar(sig * env * amp.lag(0.1) * ampDrift, pan.lag(0.1)));
+// 2.1 Drift / tire-skid voice: noise-based friction texture with wandering
+//     resonant filters + slow random modulation, so it slides/scrapes instead
+//     of holding a pitch. Triggered on demand (see ~setDrift), not always-on.
+SynthDef(\driftVoice, { |out = 0, amp = 0.32, gate = 1, pan = 0|
+    var env, motion, squealFreq, squeal, scrub, rumble, sig;
+    // slow random "motion" -> the sound slides and wavers instead of sitting still
+    motion     = LFNoise1.kr(0.4).range(0.35, 1.0);
+    squealFreq = LFNoise1.kr(0.7).exprange(700, 2600)            // wandering skid pitch
+                 * SinOsc.kr(LFNoise1.kr(0.3).range(4, 9), 0, 0.03, 1);  // slight waver
+    // high-Q resonant noise = tire squeal / skid
+    squeal = BPF.ar(WhiteNoise.ar, squealFreq, 0.12) * 6;
+    squeal = squeal * LFNoise1.kr(0.9).range(0.25, 1.0);         // flickering intensity
+    // broadband filtered noise = rubber scrubbing on tarmac
+    scrub  = BPF.ar(PinkNoise.ar, LFNoise1.kr(0.5).exprange(900, 4200), 0.6) * 1.6;
+    // low contact rumble
+    rumble = LPF.ar(BrownNoise.ar, 190) * 0.6;
+    sig = ((squeal + scrub) * motion) + rumble;
+    sig = LeakDC.ar(sig);
+    sig = (sig * 0.6).tanh;                                      // soft-clip, stay controlled
+    env = EnvGen.kr(Env.asr(0.7, 1, 1.1), gate, doneAction: 2);
+    Out.ar(out, Pan2.ar(sig * env * amp.lag(0.1), pan));
 }).add;
 
 // 2.2 Turn-signal blink: short, bright "beep" with a tick attack.
@@ -161,25 +173,31 @@ SynthDef(\mainOut, { |engineIn, otherIn, out = 0, amp = 0.5,
 };
 
 ~applyStandaloneControl = {
-    var driftFreq;
     if(~controlMode == \standaloneSC) {
-        driftFreq = (~params.rootMidi + ~sensor.pitchSemis).midicps;
-        ~drift !? {
-            ~drift.set(
-                \freq, driftFreq,
-                \pan, ~sensor.pan,
-                \cutoff, ~sensor.cutoff,
-                \amp, 0.26 + (~sensor.intensity * 0.16)
-            );
-        };
+        ~drift  !? { ~drift.set(\amp, ~params.driftAmp + (~sensor.intensity * 0.18)) };
         ~engine !? { ~engine.set(\engineSpeed, ~engineSpeedFor.value) };
     };
 };
 
-// Map board roll to a discrete turn state and feed it to the turn controller.
+// Map board roll to a turn state, with hysteresis so jitter near the threshold
+// doesn't flicker the blinker: start above turnOnThreshold, return to straight
+// only below turnOffThreshold; a clean sign change can still flip L<->R.
 ~deriveTurnFromRoll = { |rollNorm|
-    var t = if(rollNorm.abs < ~params.turnThreshold) { 0 } { rollNorm.sign };
-    ~setTurn.value(t);
+    var mag  = rollNorm.abs;
+    var cur  = ~sensor.turn;
+    var next = cur;
+    if(cur == 0) {
+        if(mag > ~params.turnOnThreshold) { next = rollNorm.sign };
+    } {
+        if(mag < ~params.turnOffThreshold) {
+            next = 0;
+        } {
+            if((rollNorm.sign != cur) and: { mag > ~params.turnOnThreshold }) {
+                next = rollNorm.sign;
+            };
+        };
+    };
+    if(next != cur) { ~setTurn.value(next) };
 };
 
 ~updateFromTilt = { |roll, pitch|
@@ -200,8 +218,9 @@ SynthDef(\mainOut, { |engineIn, otherIn, out = 0, amp = 0.5,
 
     ~applyStandaloneControl.value;
 
-    if((~controlMode == \standaloneSC) and: { ~params.turnFromRoll }) {
-        ~deriveTurnFromRoll.value(rollNorm);
+    if(~controlMode == \standaloneSC) {
+        if(~params.turnFromRoll) { ~deriveTurnFromRoll.value(rollNorm) };
+        if(~params.driftFromPan) { ~setDrift.value(~sensor.pan) };
     };
 };
 
@@ -264,6 +283,26 @@ Pdef(\cmlsTurn, Pbind(
     // direction flip while already blinking: pattern keeps running, pitch follows
 };
 
+// Drive the drift/tire sound with hysteresis: start when |pan| rises above
+// driftOnThreshold, stop only when it falls below driftOffThreshold. The
+// deadband between the two keeps real sensor jitter from chattering it on/off.
+~setDrift = { |panValue|
+    var mag = panValue.abs;
+    if(~drift.isNil and: { mag > ~params.driftOnThreshold }) {
+        ~master !? {
+            ~drift = Synth(\driftVoice,
+                [\out, ~otherBus, \amp, ~params.driftAmp, \pan, 0],
+                ~srcGroup
+            );
+            ~applyStandaloneControl.value;
+        };
+    };
+    if(~drift.notNil and: { mag < ~params.driftOffThreshold }) {
+        ~drift.release;   // gate 0 -> fade out -> self-free (doneAction 2)
+        ~drift = nil;
+    };
+};
+
 ~start = {
     ~stop.value;
 
@@ -278,22 +317,13 @@ Pdef(\cmlsTurn, Pbind(
         ~srcGroup
     );
 
-    // drifting drone -> RIGHT (always on)
-    ~drift = Synth(\driftVoice,
-        [
-            \out, ~otherBus,
-            \freq, ~params.rootMidi.midicps,
-            \amp, 0.3,
-            \pan, 0,
-            \cutoff, if(~controlMode == \standaloneSC) { ~sensor.cutoff } { 1600 }
-        ],
-        ~srcGroup
-    );
+    // drift/tire sound is triggered on demand (see ~setDrift), not started here.
 
     ~applyStandaloneControl.value;
 
-    // if a turn was already requested before playback started, begin blinking now
+    // honor anything already requested before playback started
     if(~sensor.turn != 0) { ~startTurnPattern.value };
+    ~setDrift.value(~sensor.pan);
 
     ["started", \controlMode, ~controlMode, \turn, ~sensor.turn].postln;
 };
@@ -345,8 +375,6 @@ Pdef(\cmlsTurn, Pbind(
 
     OSCdef(\setRoot, { |msg|
         ~params.rootMidi = msg[1];
-        ~drift !? { ~drift.set(\freq, msg[1].midicps) };
-        ~applyStandaloneControl.value;
     }, '/control/root/midi')
 ];
 )
@@ -356,14 +384,16 @@ Pdef(\cmlsTurn, Pbind(
 // 1) Evaluate block 0, run s.boot, wait until the server is ready.
 // 2) Evaluate blocks 1, 2, 3, 4, 5 in order.
 //    (Block 2 auto-loads engine.scd; if it warns, evaluate engine.scd by hand.)
-// 3) ~start.value;                 -- start the car soundscape (engine + drift)
+// 3) ~start.value;                 -- start the car soundscape (engine; drift/turn on demand)
 // 4) ~stop.value;                  -- stop everything
 // 5) ~oscHandlers.do(_.free);      -- release OSC handlers
 //
-// Quick turn-signal tests (no hardware needed):
-//   ~setTurn.value(1);   -- right turn -> blinking starts on the RIGHT channel
-//   ~setTurn.value(-1);  -- left turn  -> blinking continues, lower pitch
-//   ~setTurn.value(0);   -- straight   -> blinking stops
+// Quick tests (no hardware needed):
+//   ~setTurn.value(1);    -- right turn  -> blink starts on the RIGHT channel
+//   ~setTurn.value(-1);   -- left turn   -> blink continues, lower pitch
+//   ~setTurn.value(0);    -- straight    -> blink stops
+//   ~setDrift.value(0.9); -- |pan|>0.7   -> tire/drift sound fades in (RIGHT)
+//   ~setDrift.value(0);   -- back inside -> drift fades out
 //
 // Channel map (for the JUCE plugin):
 //   LEFT  = engine sound   (pitch-shift / process this one)
