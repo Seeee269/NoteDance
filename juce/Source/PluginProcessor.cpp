@@ -10,7 +10,8 @@
 #include "PluginEditor.h"
 #include "Parameters.h"
 
-//==============================================================================
+//=====================1.Constructor and Parameters===================================
+//Original Constructor function
 NoteDanceAudioProcessor::NoteDanceAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfiguration
      : AudioProcessor (BusesProperties()
@@ -31,9 +32,6 @@ NoteDanceAudioProcessor::NoteDanceAudioProcessor()
 }
 
     
-
-
-
 NoteDanceAudioProcessor::~NoteDanceAudioProcessor()
 {
     parameters.removeParameterListener(Parameters::nameInput, this);
@@ -41,6 +39,7 @@ NoteDanceAudioProcessor::~NoteDanceAudioProcessor()
     
 }
 
+//update parameters:pitch, mix, pan
 void NoteDanceAudioProcessor::parameterChanged(const juce::String &parameterID, float newValue)
 {
     
@@ -68,14 +67,14 @@ void NoteDanceAudioProcessor::parameterChanged(const juce::String &parameterID, 
         updateParameters();
 }
 
+//update paramenters: gain
 void NoteDanceAudioProcessor::updateParameters()
 {
     inputModule.setGainDecibels(parameters.getRawParameterValue("input")->load());
     outputModule.setGainDecibels(parameters.getRawParameterValue("output")->load());
-     
 }
 
-//==============================================================================
+//=====================Basic Settings===========================================
 const juce::String NoteDanceAudioProcessor::getName() const
 {
     return JucePlugin_Name;
@@ -139,7 +138,10 @@ void NoteDanceAudioProcessor::changeProgramName (int index, const juce::String& 
 
 
 
-//==============================================================================
+//=====================Audio lifecycle functions=============================
+//prepareToPlay
+//input: sampleRate and block size(samplesPerBlock)
+//init prepare before playing
 void NoteDanceAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
 
@@ -170,6 +172,7 @@ void NoteDanceAudioProcessor::releaseResources()
  
 }
 
+//Set input and output channel: mono or stereo
 #ifndef JucePlugin_PreferredChannelConfigurations
 bool NoteDanceAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -195,7 +198,7 @@ bool NoteDanceAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts
   #endif
 }
 #endif
-
+//modify the audio block-by-block
 void NoteDanceAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -227,9 +230,9 @@ void NoteDanceAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             auto* left  = buffer.getWritePointer (0);
             auto* right = buffer.getReadPointer  (1);
-
+            
             for (int i = 0; i < numSamples; ++i)
-                left[i] = (left[i] + right[i]);
+                left[i] = (left[i] + right[i]); 
 
             buffer.clear (1, 0, numSamples);
         }
@@ -247,7 +250,8 @@ void NoteDanceAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 }
 
 
-//==============================================================================
+//=======================UI functions======================================
+//we have our own UI
 bool NoteDanceAudioProcessor::hasEditor() const
 {
     return true; // (change this to false if you choose to not supply an editor)
@@ -259,7 +263,7 @@ juce::AudioProcessorEditor* NoteDanceAudioProcessor::createEditor()
     //return new juce::GenericAudioProcessorEditor (*this);
 }
 
-//==============================================================================
+//=====================Plugin state========================================
 void NoteDanceAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     
