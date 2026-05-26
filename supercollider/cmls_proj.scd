@@ -59,9 +59,8 @@ s.boot;
     engineIdleSpeed:  0.34,   // engineSpeed at rest (0..1)
     engineMaxSpeed:   0.9,    // engineSpeed under full activity
     // --- firmware adapt (Arduino /rotary knob + /accel IMU) ---
-    rotaryCenter:     492,    // knob raw value when centered (from JUCE peaks 474/509)
-    rotarySpan:       17,     // raw distance center -> full turn (509-492 ~= 17)
-    rotaryDead:       0.3,    // |norm| below this counts as going straight
+    rotaryCenter:     498,    // measured: knob raw when centered
+    rotarySpan:       10,     // measured: center->488 right (~10), center->509 left (~11)
     accelPeak:        0.6     // |accel| in g that counts as full engine rev
 );
 
@@ -382,12 +381,14 @@ Pdef(\cmlsTurn, Pbind(
     }, '/control/root/midi'),
 
     // --- Direct firmware protocol (Arduino: /rotary knob + /accel IMU) ---
-    // /rotary <raw> : Grove knob ~474..509 (center 492) -> steering / turn signal
+    // /rotary <raw> : Grove knob. Measured center 498, right turn -> 488 (raw down),
+    // left turn -> 509 (raw up). norm: +1 = right, -1 = left, 0 = centered.
     OSCdef(\fwRotary, { |msg|
-        var norm = ((msg[1] - ~params.rotaryCenter) / ~params.rotarySpan).clip(-1, 1);
-        // norm: -1..+1, 0 = centered. If left/right is reversed, use norm.neg below.
-        ~setTurn.value(if(norm.abs < ~params.rotaryDead) { 0 } { norm.sign });
-        // ~setDrift.value(norm);   // uncomment to also trigger the skid on hard turns
+        var norm = ((~params.rotaryCenter - msg[1]) / ~params.rotarySpan).clip(-1, 1);
+        // reuse the existing hysteresis so jitter near a threshold doesn't
+        // chatter the turn signal / skid on and off:
+        ~deriveTurnFromRoll.value(norm);   // turn signal, hysteresis: on 0.35 / off 0.25
+        ~setDrift.value(norm);             // skid,         hysteresis: on 0.7  / off 0.55
     }, '/rotary'),
 
     // /accel <ax> <ay> : IMU accel X/Y (g) -> engine revs
