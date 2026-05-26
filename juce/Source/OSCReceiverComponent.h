@@ -41,22 +41,74 @@ public:
     
     void oscMessageReceived(const juce::OSCMessage& message) override
     {
-        if (message.getAddressPattern().toString() != "/accel")
-            return;
+        // --- 1. GESTIONE ACCELEROMETRO -> PITCH ---
+        if (message.getAddressPattern().toString() == "/accel")
+        {
+            if (message.size() < 1) return;
 
-        if (message.size() < 2)
-            return;
+            constexpr float accelMinPeak = -0.61f;
+            constexpr float accelMaxPeak = 0.60f;
+            constexpr float deadZone = 0.03f;
 
-        float accelX = message[0].getFloat32();
-        float accelY = message[1].getFloat32();
+            const float accelX = juce::jlimit(accelMinPeak, accelMaxPeak,
+                                              message[0].getFloat32());
 
-        //Pan Mapping
-        mappedPan = accelX;
-        mappedPan = juce::jlimit(-1.0f, 1.0f, mappedPan);
-        
-        //Pitch Mapping
-        mappedPitch += accelY * sensitivity;
-        mappedPitch = juce::jlimit(0.0f, 1.0f, mappedPitch);
+            if (std::abs(accelX) <= deadZone)
+                mappedPitch = 0.0f;
+            else
+                mappedPitch = juce::jmap(accelX, accelMinPeak, accelMaxPeak, 0.0f, 12.0f);
+
+            if (auto* p = parameters.getParameter("pitch"))
+                p->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f,
+                        p->getNormalisableRange().convertTo0to1(mappedPitch)));
+        }
+
+        // --- 2. GESTIONE ROTARY SENSOR -> PAN ---
+        else if (message.getAddressPattern().toString() == "/rotary")
+        {
+            if (message.size() < 1) return;
+
+            float rotaryValue = 0.0f;
+
+            if (message[0].isInt32()) {
+                rotaryValue = static_cast<float>(message[0].getInt32());
+            }
+            else if (message[0].isFloat32()) {
+                rotaryValue = message[0].getFloat32();
+            }
+
+            // Mappiamo il valore del Grove Sensor (0-1023) al range del Pan (-1.0 a 1.0)
+            mappedPan = juce::jmap(rotaryValue, 0.0f, 1023.0f, -1.0f, 1.0f);
+            constexpr float rotaryCenter = 492.0f;
+            constexpr float rotaryLeftPeak = 509.0f;
+            constexpr float rotaryRightPeak = 474.0f;
+            constexpr float rotaryDeadZone = 3.0f;
+
+            rotaryValue = juce::jlimit(rotaryRightPeak, rotaryLeftPeak, rotaryValue);
+
+            if (std::abs(rotaryValue - rotaryCenter) <= rotaryDeadZone)
+            {
+                mappedPan = 0.0f;
+            }
+            else if (rotaryValue > rotaryCenter)
+            {
+                mappedPan = juce::jmap(rotaryValue,
+                                       rotaryCenter + rotaryDeadZone, rotaryLeftPeak,
+                                       0.0f, -1.0f);
+            }
+            else
+            {
+                mappedPan = juce::jmap(rotaryValue,
+                                       rotaryCenter - rotaryDeadZone, rotaryRightPeak,
+                                       0.0f, 1.0f);
+            }
+
+            if (auto* p = parameters.getParameter("pan"))
+                p->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f,
+                        p->getNormalisableRange().convertTo0to1(mappedPan)));
+        }
     }
 
     void updateParameters()
@@ -65,7 +117,9 @@ public:
         {
             if (auto* p = parameters.getParameter("pitch"))
             {
-                p->setValueNotifyingHost(mappedPitch);
+                p->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f,
+                        p->getNormalisableRange().convertTo0to1(mappedPitch)));
             }
             
             lastPitch = mappedPitch;
@@ -75,7 +129,9 @@ public:
         {
             if (auto* p = parameters.getParameter("pan"))
             {
-                p->setValueNotifyingHost(mappedPan);
+                p->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f,
+                        p->getNormalisableRange().convertTo0to1(mappedPan)));
             }
             
             lastPan = mappedPan;
@@ -95,6 +151,7 @@ private:
     //Mapping parameters
     float sensitivity;
     float deadzone;
+
     float lastPitch = 0.0f;
     float lastPan = 0.0f;
     
