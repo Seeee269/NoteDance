@@ -46,8 +46,8 @@ public:
         {
             if (message.size() < 1) return;
 
-            constexpr float accelMinPeak = -0.61f;
-            constexpr float accelMaxPeak = 0.60f;
+            constexpr float accelMinPeak = -0.23f;
+            constexpr float accelMaxPeak = -0.14f;
             constexpr float deadZone = 0.03f;
 
             const float accelX = juce::jlimit(accelMinPeak, accelMaxPeak,
@@ -80,9 +80,9 @@ public:
 
             // Mappiamo il valore del Grove Sensor (0-1023) al range del Pan (-1.0 a 1.0)
             mappedPan = juce::jmap(rotaryValue, 0.0f, 1023.0f, -1.0f, 1.0f);
-            constexpr float rotaryCenter = 492.0f;
+            constexpr float rotaryCenter = 500.0f;
             constexpr float rotaryLeftPeak = 509.0f;
-            constexpr float rotaryRightPeak = 474.0f;
+            constexpr float rotaryRightPeak = 490.0f;
             constexpr float rotaryDeadZone = 3.0f;
 
             rotaryValue = juce::jlimit(rotaryRightPeak, rotaryLeftPeak, rotaryValue);
