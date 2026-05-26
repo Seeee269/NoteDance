@@ -1,210 +1,166 @@
-# NoteDance - Sensor-Driven Sound Prototype
+# NoteDance — Sensor-Driven Car Soundscape
 
-NoteDance is a sensor-controlled audio prototype that combines:
+NoteDance turns the motion of an RC car into a live car soundscape. An Arduino
+on the car streams sensor data over Wi-Fi as OSC; **SuperCollider** synthesises
+the sounds and a **JUCE plugin** processes them.
 
-- **SuperCollider** for the main car/gesture soundscape.
-- **Python OSC bridge** for real or mock accelerometer data.
-- **JUCE plugin** for pitch-shifting and panning controlled by OSC.
+- **SuperCollider** — the car soundscape: engine, tire/drift skid, and a
+  rhythmic turn-signal melody.
+- **JUCE plugin (NoteDance)** — pitch-shifts and pans the audio under OSC control.
+- **Arduino firmware** — reads an IMU + a steering knob and sends OSC over Wi-Fi.
+- **Python bridge (optional)** — a mock/serial sensor source for testing
+  SuperCollider without the car.
 
-The repository includes both the SuperCollider prototype and a working JUCE plugin project in `juce/`.
+## Signal Flow
+
+```mermaid
+flowchart TD
+    FW["Arduino on RC car<br/>LSM6DS3 IMU + Grove rotary knob"]
+    FW -->|"OSC /accel /rotary, Wi-Fi"| SC
+    FW -->|"OSC /accel /rotary"| JU
+
+    subgraph SC["SuperCollider — cmls_proj.scd"]
+        direction TB
+        ROT["/rotary -> steering"]
+        ACC["/accel -> engine revs"]
+        ROT --> TURN["turn signal (RIGHT)"]
+        ROT --> DRF["tire/drift skid (RIGHT)"]
+        ACC --> ENG["engine (LEFT)"]
+        ENG --> MO["mainOut: LEFT = engine, RIGHT = drift + turn"]
+        TURN --> MO
+        DRF --> MO
+    end
+
+    MO -->|"audio via BlackHole / VB-CABLE"| JU["JUCE plugin<br/>pitch-shift LEFT (engine) + pan"]
+    JU --> OUT["stereo output"]
+```
+
+- **Steering** (Grove rotary, `/rotary`) → turn signal, plus a tire skid on hard turns.
+- **Acceleration** (IMU, `/accel`) → engine revs.
+- Stereo split: **LEFT = engine**, **RIGHT = drift + turn**, so the plugin
+  pitch-shifts only the engine and leaves the rest untouched.
+- SC audio reaches the plugin through a virtual audio device (BlackHole / VB-CABLE).
+
+## Hardware
+
+- RC car with an **Arduino UNO WiFi Rev2** on top, powered by a 4×AA pack —
+  fully wireless.
+- Onboard **LSM6DS3** accelerometer → `/accel` (X, Y in g).
+- **Grove rotary angle sensor** on `A0`, mechanically linked to the steering by
+  a wire arm → `/rotary` (raw ≈ 488 right … 498 centre … 509 left).
+- The firmware (`ReadAccelerometer.ino`) connects to Wi-Fi and streams OSC to
+  **both** the JUCE plugin (`<pc-ip>:9001`) and SuperCollider (`<pc-ip>:57120`).
+
+## OSC Protocol
+
+| Address   | Args           | Meaning                                            |
+|-----------|----------------|----------------------------------------------------|
+| `/rotary` | `raw` float    | steering knob (≈488 right, ≈498 centre, ≈509 left) |
+| `/accel`  | `ax ay` floats | IMU X/Y acceleration in g                          |
+
+Ports: **JUCE `9001`**, **SuperCollider `57120`**. SuperCollider *also* accepts
+the Python-bridge protocol (`/sensor/accel|tilt|shake|turn`) for hardware-free
+testing, but the car only sends `/rotary` + `/accel`.
+
+## How To Run (full end-to-end)
+
+1. Install **SuperCollider**, **JUCE**, the **Arduino IDE**, and a virtual audio
+   driver (**BlackHole** on macOS, **VB-CABLE** on Windows).
+2. Build the **NoteDance** plugin from `juce/NoteDance.jucer`, or use a prebuilt
+   `NoteDance.vst3`.
+3. Open JUCE's **AudioPluginHost** (`JUCE/extras/AudioPluginHost`) and load
+   `NoteDance.vst3`.
+4. **Route SuperCollider's audio into the plugin host** through the virtual
+   audio device (set SC's output device and the host's input both to
+   BlackHole / VB-CABLE).
+5. Open `supercollider/cmls_proj.scd`; evaluate block 0, run `s.boot`, then
+   evaluate blocks 1–5 and `~start.value;`.
+6. Upload `ReadAccelerometer.ino` to the Arduino and power on the board on the car.
+7. Steer / accelerate → turn signal, skid, and engine revs, processed by the plugin.
+
+No hardware? Run the self-contained SC demo (boots, loads, plays engine →
+throttle → drift → turn signals → stop):
+
+```bash
+sclang supercollider/test.scd
+```
+
+## SuperCollider
+
+`supercollider/cmls_proj.scd` is the sound source. It synthesises three voices
+and splits them hard across the stereo field:
+
+| Voice              | Channel | Driven by                                           |
+|--------------------|---------|-----------------------------------------------------|
+| engine             | LEFT    | `/accel` energy → idle ↔ high revs                  |
+| tire / drift skid  | RIGHT   | `/rotary` hard turn (hysteresis: on 0.7 / off 0.55) |
+| turn-signal melody | RIGHT   | `/rotary` steering (hysteresis: on 0.35 / off 0.25) |
+
+Files: `cmls_proj.scd` (main), `engine.scd` (engine SynthDef, auto-loaded),
+`test.scd` (one-shot, no-hardware demo).
+
+Manual run: open `cmls_proj.scd`, `s.boot`, evaluate blocks 1–5, then
+`~start.value;` / `~stop.value;`.
+
+Live tuning (evaluate any time):
+
+```supercollider
+~params.rotaryCenter = 498;   ~params.rotarySpan = 10;          // knob calibration
+~params.turnOnThreshold = 0.35; ~params.turnOffThreshold = 0.25; // turn signal
+~params.driftOnThreshold = 0.7; ~params.driftOffThreshold = 0.55; // skid
+~params.rollPanPolarity = -1;   // flip if left/right is reversed
+```
+
+## JUCE Plugin (NoteDance)
+
+`juce/` is a full JUCE plugin:
+
+- stereo in/out, input/output gain
+- pitch shifting (engine) + panning, driven by OSC on port `9001`
+- custom UI with rotary controls
+- Standalone and VST3 build targets
+
+| File                      | Purpose                                   |
+|---------------------------|-------------------------------------------|
+| `PluginProcessor.cpp/.h`  | audio processing + parameters             |
+| `PluginEditor.cpp/.h`     | custom UI                                 |
+| `Parameters.h`            | input, output, pitch, mix, pan parameters |
+| `OSCReceiverComponent.h`  | OSC input on `9001` (`/accel`, `/rotary`) |
+| `MyPitchShifter.h`        | custom pitch shifter                      |
+| `MyPanner.h`              | custom stereo panner                      |
+
+Build: open `juce/NoteDance.jucer`, or the generated solutions
+`juce/Builds/VisualStudio2022/NoteDance.sln` (or `VisualStudio2026`), and build
+`NoteDance_StandalonePlugin` or `NoteDance_VST3`.
+
+## Python Bridge (optional, not used by the car)
+
+`bridge/bridge.py` is **not** in the live signal path — the firmware sends OSC
+over Wi-Fi directly. It's kept only to test SuperCollider without the car: it
+emits the `/sensor/*` protocol from a `--mock` sine or from a serial sensor.
+
+```bash
+cd bridge
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python3 bridge.py --mock --debug
+```
 
 ## Repository Layout
 
 ```text
-NoteDance-main/
-|-- supercollider/        SuperCollider sound prototype
-|-- bridge/               Python sensor / OSC bridge and JUCE OSC tester
-|-- juce/                 NoteDance JUCE plugin project
-|-- docs/                 Notes, diagrams, report/demo material
-|-- .gitignore
+NoteDance/
+|-- supercollider/   cmls_proj.scd (main) · engine.scd · test.scd
+|-- juce/            NoteDance JUCE plugin (Source/, Builds/, .jucer)
+|-- arduino/         Arduino firmware (ReadAccelerometer.ino)
+|-- bridge/          optional Python mock/serial -> OSC bridge
+|-- docs/            notes, diagrams, report / demo material
 `-- README.md
 ```
-
-## What Works
-
-- `supercollider/cmls_proj.scd` runs the main SuperCollider sound prototype.
-- `bridge/bridge.py` can use either real Arduino accelerometer data or mock sensor data.
-- The Python bridge sends OSC data to SuperCollider and the JUCE port.
-- `juce/` contains the **NoteDance** JUCE plugin with:
-  - stereo input/output
-  - input and output gain
-  - pitch shifting
-  - panning
-  - OSC-controlled parameter updates
-  - custom UI with rotary controls
-  - Standalone and VST3 build targets
-
-## Architecture
-
-```text
-[Accelerometer / mock data]
-          |
-          v
-[Python bridge] --OSC--> [SuperCollider sound prototype]
-          |
-          '--OSC--> [JUCE plugin: pitch + pan processing]
-```
-
-SuperCollider currently creates the main audio scene. The JUCE plugin is designed as a downstream effect that can react to sensor movement through OSC.
-
-# Hardware
-
-The hardware setup is based on an RC car with an Arduino UNO WiFi Rev2 mounted on top. The system is powered by a 4xAA battery pack and includes a Grove rotary angle sensor.
-
-The Arduino firmware connects to Wi-Fi automatically, allowing the hardware to operate entirely without using cables. It streams data from both the onboard accelerometer and the external rotary sensor, which is mechanically linked to the steering via a wire arm.
-
-Communication uses OSC: messages are sent to the JUCE plugin on port `9001` and to SuperCollider on port `57120`, using the `/rotary` and `/accel` name tags.
-
-## Running the SuperCollider Prototype
-
-1. Install SuperCollider 3.13+.
-2. Open `supercollider/cmls_proj.scd`.
-3. Boot the server:
-
-```supercollider
-s.boot;
-```
-
-4. Evaluate the setup blocks from top to bottom.
-5. Start playback:
-
-```supercollider
-~start.value;
-```
-
-Stop playback with:
-
-```supercollider
-~stop.value;
-```
-
-## Running the Python Bridge
-
-Install dependencies:
-
-```bash
-cd bridge
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Run with mock sensor data:
-
-```bash
-python3 bridge.py --mock --debug
-```
-
-Run with Arduino hardware:
-
-```bash
-python3 bridge.py --port /dev/tty.usbmodem1101 --debug
-```
-
-Default OSC destinations:
-
-| Destination | Host | Port |
-|-------------|------|------|
-| SuperCollider | `127.0.0.1` | `57120` |
-| JUCE | `127.0.0.1` | `9001` |
-
-## JUCE Plugin
-
-The JUCE implementation is in:
-
-```text
-juce/NoteDance.jucer
-juce/Source/
-juce/Assets/
-juce/Builds/
-```
-
-Main source files:
-
-| File | Purpose |
-|------|---------|
-| `PluginProcessor.cpp/.h` | audio processing and parameters |
-| `PluginEditor.cpp/.h` | custom plugin interface |
-| `Parameters.h` | input, output, pitch, mix, and pan parameters |
-| `OSCReceiverComponent.h` | OSC control on UDP port `9001` |
-| `MyPitchShifter.h` | custom pitch shifter |
-| `MyPanner.h` | custom stereo panner |
-
-### Building
-
-Open the JUCE project:
-
-```text
-juce/NoteDance.jucer
-```
-
-or use the generated Visual Studio projects:
-
-```text
-juce/Builds/VisualStudio2022/NoteDance.sln
-juce/Builds/VisualStudio2026/NoteDance.sln
-```
-
-Build either:
-
-- `NoteDance_StandalonePlugin`
-- `NoteDance_VST3`
-
-## Testing the JUCE OSC Control
-
-The JUCE plugin currently listens for test messages on port `9001`:
-
-```text
-/accel x y
-```
-
-Use the included tester:
-
-```bash
-cd bridge
-python3 osc_juce_test.py
-```
-
-Drag inside the XY pad:
-
-- horizontal movement controls pan
-- vertical movement changes pitch
-
-## Integration Note
-
-There are currently two reliable demo paths:
-
-1. **SuperCollider demo:** `bridge.py` + `cmls_proj.scd`
-2. **JUCE demo:** `osc_juce_test.py` + NoteDance plugin
-
-The full Python bridge sends SC-style OSC addresses such as `/sensor/accel`, `/sensor/tilt`, and `/sensor/shake`. The JUCE plugin currently listens for the simpler `/accel x y` test message.
-
-For full SC/JUCE integration, the next step is to either update the JUCE receiver to parse the bridge messages, or make the bridge also send `/accel x y` to the JUCE plugin.
-
-## Hardware Notes
-
-The Arduino-side serial format expected by `bridge.py` is:
-
-```text
-x,y,z\n
-```
-
-Values should be acceleration in g units. The current notes assume an MMA7361 3-axis analog accelerometer wired to Arduino analog inputs A0, A1, and A2.
 
 ## Team Workflow
 
 - Keep `main` demo-ready.
 - Use small feature branches.
 - Coordinate before changing OSC address names or argument types.
-- Update this README when the SC/JUCE protocol changes.
-
-## How To Run
-
-1. Download the `Supercollider`, `JUCE` and `Arduino` 
-2. Download a virtual audio driver, like `VB-CABLE` or `BlackHole Audio`
-3. Compile the `AudioPluginHost.jucer` from `.\JUCE\extras\AudioPluginHost` and open `AudioPluginHost.exe`
-4. Use the existed `NoteDance.vst3` or Compile the `NoteDance.jucer` from `.\NoteDance\juce` and open `NoteDance.vst3` and link it to `AudioPluginHost.exe`
-5. Set the output audio of SC as the input of JUCE
-6. Open the `cmls_proj.scd` and run it block by block
-7. Upload the code on the Arduino board
-8. Turn on the board on top of the car to start sending data to the SC and the Juce plugin
+- Update this README when the firmware / SC / JUCE protocol changes.
