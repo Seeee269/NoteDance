@@ -1,32 +1,73 @@
 # CMLS Project - Sensor-Driven Sound Prototype
 
-Current focus: **SuperCollider standalone prototype**.
+Current focus: **SuperCollider car-sound source**.
 
-The project explores using an RC car or handheld board with a 3-axis
-accelerometer to control sound. At this stage, SuperCollider can generate
-either a continuous drone or a simple looping melody, and it can also respond
-directly to sensor OSC data.
+The project turns motion from a 3-axis accelerometer (on an RC car or handheld
+board) into a car soundscape. SuperCollider synthesises three sounds — an
+engine, a tire/drift skid, and a turn-signal melody — and reacts to sensor OSC
+data in real time.
 
-Future direction: the same SuperCollider source can later be routed into a
-JUCE plugin if the team chooses to move sensor-driven processing into the
-plugin.
+The output is split hard across the stereo field (engine on the LEFT channel,
+everything else on the RIGHT) so a downstream JUCE plugin can pitch-shift only
+the engine and leave the turn signal and drift untouched.
 
 ## What Works Today
 
 - A single SuperCollider script (`supercollider/cmls_proj.scd`) acts as a
   self-contained sensor-to-sound console.
-- Two sound sources: a slowly evolving stereo drone and an 8-note pentatonic
-  loop.
+- Three sound sources: an **engine** (left channel), a noise-based **tire/drift
+  skid**, and a rhythmic **turn-signal** melody (both on the right channel).
+- A hard stereo split (LEFT = engine, RIGHT = drift + turn) so a JUCE plugin can
+  pitch-shift only the engine and bypass the rest.
+- Engine is always on; turn signal and drift are **triggered with hysteresis**
+  (the blinker while turning, the skid only past a steeper lean).
 - Two control modes selectable from the top of the script:
-  - `\standaloneSC` (default): incoming OSC immediately changes pitch, pan,
-    filter brightness, and (for melody) tempo.
+  - `\standaloneSC` (default): incoming OSC immediately drives engine revs,
+    turn signal, pan, and the drift trigger.
   - `\pluginSource`: SC ignores sensor motion and stays a stable source so a
     future JUCE plugin can take over the modulation.
+- A test runner (`supercollider/test.scd`) that boots, loads everything, and
+  plays a no-hardware demo (idle → throttle → drift → turn signals → stop).
 - A Python bridge (`bridge/bridge.py`) that emits the same OSC protocol from
   either real Arduino/MMA7361 input or a `--mock` sine wave for testing
   without hardware.
 
 ## Current Architecture
+
+### SuperCollider signal flow
+
+```mermaid
+flowchart TD
+    FW["Sensor / firmware"]
+
+    subgraph SC["SuperCollider — cmls_proj.scd"]
+        direction TB
+        OSC["OSC handlers<br/>/sensor/tilt · accel · shake · turn"]
+        ST["~sensor state<br/>roll → pan · intensity · turn"]
+        ENG["engine voice<br/>speed from shake / accel"]
+        DRF["drift voice — tire-skid<br/>triggered when pan over 0.7 · hysteresis"]
+        TRN["turn signal — people-people<br/>triggered when roll over 0.35 · hysteresis"]
+        EB["~engineBus"]
+        OB["~otherBus"]
+        MO["mainOut<br/>LEFT = engine · RIGHT = drift + turn"]
+        OSC --> ST
+        ST --> ENG
+        ST --> DRF
+        ST --> TRN
+        ENG --> EB
+        DRF --> OB
+        TRN --> OB
+        EB --> MO
+        OB --> MO
+    end
+
+    FW -->|"OSC /sensor/* — UDP 57120"| OSC
+    MO --> LFT(["LEFT channel"])
+    MO --> RGT(["RIGHT channel"])
+    LFT --> PL["JUCE plugin"]
+    RGT --> PL
+    PL -->|"LEFT pitch-shifted · RIGHT bypassed"| OUT(["stereo output"])
+```
 
 ### Current SC-first demo
 
@@ -56,7 +97,9 @@ placeholder for later team work.
 ```text
 cmls/
 |-- supercollider/         Current focus: SC sound + sensor OSC control
-|   `-- cmls_proj.scd
+|   |-- cmls_proj.scd      main project (engine + drift + turn, stereo split)
+|   |-- engine.scd         engine voice SynthDef
+|   `-- test.scd           one-shot boot + load + demo runner
 |-- bridge/                Optional draft bridge: Arduino serial -> OSC
 |   |-- arduino_accel/     Arduino sketch for MMA7361 (3-axis analog accel)
 |   |-- bridge.py          Python serial/mock -> OSC sender
@@ -69,35 +112,37 @@ cmls/
 
 ## SuperCollider Modes
 
-Open `supercollider/cmls_proj.scd` and choose these variables near the top:
+One control-mode variable near the top of `supercollider/cmls_proj.scd`:
 
 ```supercollider
-~soundMode = \drone;          // \drone or \melody
 ~controlMode = \standaloneSC; // \standaloneSC or \pluginSource
 ```
 
-- `\standaloneSC`: SuperCollider receives sensor OSC and directly changes the
-  sound. This is the main mode for the current prototype.
+- `\standaloneSC` (default): SuperCollider receives sensor OSC and directly
+  shapes the sound — engine revs, turn signal, and the drift trigger. This is
+  the main mode for the current prototype.
 - `\pluginSource`: SuperCollider ignores sensor motion and stays a stable
-  drone/melody source for a future JUCE plugin.
-- `\drone`: continuous sound, good for hearing pitch and filter movement.
-- `\melody`: simple repeated pattern, good for hearing tempo/transposition.
+  source so a future JUCE plugin can take over the modulation.
+
+The engine is always on; the turn signal and drift are triggered on demand
+(see Sensor Mapping below).
 
 ## Sensor Mapping
 
 In `\standaloneSC` mode:
 
-| Sensor data      | Drone mode effect            | Melody mode effect                       |
-|------------------|------------------------------|------------------------------------------|
-| board pitch/tilt | continuous pitch bend        | per-note transposition + tempo (BPM)     |
-| board roll       | stereo pan                   | stereo pan                               |
-| shake magnitude  | filter brightness, loudness  | filter brightness, per-note loudness     |
-| accel magnitude  | adds to brightness "energy"  | adds to brightness "energy"              |
+| Sensor data                  | Effect                                                          |
+|------------------------------|-----------------------------------------------------------------|
+| board roll (left/right tilt) | turn-signal direction (right rings higher, left lower); a steeper lean also triggers the drift/skid |
+| shake / accel magnitude      | engine revs (idle → high RPM) and drift loudness                |
 
-Raw "up/down acceleration" is treated as board pitch/tilt because raw
-accelerometer values are noisy for stable musical pitch control. If the board
-feels inverted, change `tiltPitchPolarity` or `rollPanPolarity` in
-`cmls_proj.scd` from `1` to `-1`.
+Both the turn signal and the drift use **hysteresis** so jitter near the
+threshold doesn't chatter them on/off (turn on 0.35 / off 0.25; drift on 0.7 /
+off 0.55, based on `|pan|`).
+
+If the board feels inverted, change `tiltPitchPolarity` or `rollPanPolarity` in
+`cmls_proj.scd` from `1` to `-1` (you can even do it live:
+`~params.rollPanPolarity = -1;`).
 
 ## OSC Protocol
 
@@ -106,9 +151,10 @@ normally `57120`.
 
 | Address          | Args                       | Notes                              |
 |------------------|----------------------------|------------------------------------|
-| `/sensor/accel`  | `x y z` floats, `-1..1`    | normalized acceleration axes       |
-| `/sensor/tilt`   | `roll pitch` floats, rad   | used for pan, pitch, and tempo     |
-| `/sensor/shake`  | `magnitude` float          | used for brightness and intensity  |
+| `/sensor/accel`  | `x y z` floats, `-1..1`    | acceleration axes -> shake energy  |
+| `/sensor/tilt`   | `roll pitch` floats, rad   | roll -> pan / turn / drift trigger |
+| `/sensor/shake`  | `magnitude` float          | engine revs + drift loudness       |
+| `/sensor/turn`   | `value` float              | explicit turn: <0 left, 0 straight, >0 right |
 
 Debug controls:
 
@@ -138,31 +184,29 @@ Stop playback with:
 
 ### 30-Second Demo Path
 
-In one terminal, run the bridge in mock mode (no hardware needed):
+Fastest path — no hardware, no bridge, just the SC test runner:
+
+```bash
+sclang supercollider/test.scd
+```
+
+It boots the server, loads everything, and plays: idle → throttle → drift skid
+→ left/right turn signals → stop.
+
+To drive it from mock sensor OSC instead, run the bridge in one terminal:
 
 ```bash
 cd bridge && python3 bridge.py --mock --debug
 ```
 
-In SuperCollider, evaluate blocks 0 through 5 then `~start.value;`. With the
-default `\standaloneSC` + `\drone` settings, you should immediately hear the
-drone bend up and down and pan from side to side as the mock sine waves come
-in over OSC.
+then in SuperCollider evaluate blocks 0–5 and `~start.value;` — the engine revs
+and pans as the mock data comes in.
 
-Try the melody mode:
+Or trigger sounds by hand in the IDE (no sensor needed):
 
 ```supercollider
-~soundMode = \melody;
-~controlMode = \standaloneSC;
-~start.value;
-```
-
-Try the future plugin-source behavior:
-
-```supercollider
-~soundMode = \drone;
-~controlMode = \pluginSource;
-~start.value;
+~setTurn.value(1);    // right turn signal  (-1 left, 0 straight)
+~setDrift.value(0.9); // start the drift/skid  (0 to stop)
 ```
 
 ## Optional Bridge Test
