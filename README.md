@@ -197,3 +197,14 @@ Values should be acceleration in g units. The current notes assume an MMA7361 3-
 - Use small feature branches.
 - Coordinate before changing OSC address names or argument types.
 - Update this README when the SC/JUCE protocol changes.
+
+## How To Run
+
+1. Download the `Supercollider`, `JUCE` and `Arduino` 
+2. Download a virtual audio driver, like `VB-CABLE` or `BlackHole Audio`
+3. Compile the `AudioPluginHost.jucer` from `.\JUCE\extras\AudioPluginHost` and open `AudioPluginHost.exe`
+4. Use the existed `NoteDance.vst3` or Compile the `NoteDance.jucer` from `.\NoteDance\juce` and open `NoteDance.vst3` and link it to `AudioPluginHost.exe`
+5. Set the output audio of SC as the input of JUCE
+6. Open the `cmls_proj.scd` and run it block by block
+7. Upload the code on the Arduino board
+8. Turn on the board on top of the car to start sending data to the SC and the Juce plugin
