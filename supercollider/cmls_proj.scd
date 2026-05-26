@@ -57,7 +57,12 @@ s.boot;
     driftAmp:          0.32,  // base level of the drift sound
     // --- engine ---
     engineIdleSpeed:  0.34,   // engineSpeed at rest (0..1)
-    engineMaxSpeed:   0.9     // engineSpeed under full activity
+    engineMaxSpeed:   0.9,    // engineSpeed under full activity
+    // --- firmware adapt (Arduino /rotary knob + /accel IMU) ---
+    rotaryCenter:     492,    // knob raw value when centered (from JUCE peaks 474/509)
+    rotarySpan:       17,     // raw distance center -> full turn (509-492 ~= 17)
+    rotaryDead:       0.3,    // |norm| below this counts as going straight
+    accelPeak:        0.6     // |accel| in g that counts as full engine rev
 );
 
 ~sensor = (
@@ -340,14 +345,13 @@ Pdef(\cmlsTurn, Pbind(
 
 
 // ---------- 5. OSC interface ----------
-// The Python bridge (bridge.py) sends:
-//   /sensor/accel x y z       floats, normalized to -1..1
-//   /sensor/tilt  roll pitch  floats, radians
-//   /sensor/shake magnitude   float
-//
-// Turn signal can be driven two ways:
-//   * automatically, from board roll (when turnFromRoll is true), or
-//   * explicitly, via /sensor/turn  <value>  (<0 left, 0 straight, >0 right).
+// Two protocols are accepted:
+//   A) Python bridge (bridge.py):
+//        /sensor/accel x y z   ·  /sensor/tilt roll pitch  ·  /sensor/shake mag
+//        /sensor/turn  <value> (<0 left, 0 straight, >0 right)
+//   B) Arduino firmware (LSM6DS3 + Grove rotary), direct OSC:
+//        /rotary <raw>      Grove knob ~474..509 (center 492)  -> steering
+//        /accel  <ax> <ay>  IMU accel X/Y in g                 -> engine revs
 (
 ~oscHandlers !? { ~oscHandlers.do(_.free) };
 
@@ -375,7 +379,23 @@ Pdef(\cmlsTurn, Pbind(
 
     OSCdef(\setRoot, { |msg|
         ~params.rootMidi = msg[1];
-    }, '/control/root/midi')
+    }, '/control/root/midi'),
+
+    // --- Direct firmware protocol (Arduino: /rotary knob + /accel IMU) ---
+    // /rotary <raw> : Grove knob ~474..509 (center 492) -> steering / turn signal
+    OSCdef(\fwRotary, { |msg|
+        var norm = ((msg[1] - ~params.rotaryCenter) / ~params.rotarySpan).clip(-1, 1);
+        // norm: -1..+1, 0 = centered. If left/right is reversed, use norm.neg below.
+        ~setTurn.value(if(norm.abs < ~params.rotaryDead) { 0 } { norm.sign });
+        // ~setDrift.value(norm);   // uncomment to also trigger the skid on hard turns
+    }, '/rotary'),
+
+    // /accel <ax> <ay> : IMU accel X/Y (g) -> engine revs
+    OSCdef(\fwAccel, { |msg|
+        var energy = ((msg[1] * msg[1]) + (msg[2] * msg[2])).sqrt
+            .linlin(0, ~params.accelPeak, 0, 1);
+        ~updateFromShake.value(energy * ~params.shakeMax);
+    }, '/accel')
 ];
 )
 
